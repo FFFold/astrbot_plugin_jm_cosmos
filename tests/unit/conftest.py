@@ -40,6 +40,71 @@ sys.modules["astrbot"] = MagicMock()
 sys.modules["astrbot.api"] = mock_astrbot_api
 sys.modules["astrbot.api.logger"] = mock_logger
 
+# Mock astrbot 子模块，供 main.py 导入
+mock_message_components = types.ModuleType("astrbot.api.message_components")
+mock_message_components.Plain = MagicMock()
+mock_message_components.File = MagicMock()
+mock_message_components.Image = MagicMock()
+sys.modules["astrbot.api.message_components"] = mock_message_components
+
+mock_event_module = types.ModuleType("astrbot.api.event")
+
+
+class _MockFilter:
+    @staticmethod
+    def command(_name):
+        def decorator(func):
+            return func
+
+        return decorator
+
+
+class _MockAstrMessageEvent:
+    pass
+
+
+class _MockMessageChain:
+    def __init__(self, chain):
+        self.chain = chain
+
+
+mock_event_module.AstrMessageEvent = _MockAstrMessageEvent
+mock_event_module.MessageChain = _MockMessageChain
+mock_event_module.filter = _MockFilter()
+sys.modules["astrbot.api.event"] = mock_event_module
+
+mock_star_module = types.ModuleType("astrbot.api.star")
+
+
+class _MockContext:
+    pass
+
+
+class _MockStar:
+    def __init__(self, context=None):
+        self.context = context
+
+
+class _MockStarTools:
+    @staticmethod
+    def get_data_dir(_name):
+        return Path(".")
+
+
+def _mock_register(*_args, **_kwargs):
+    def decorator(cls):
+        return cls
+
+    return decorator
+
+
+mock_star_module.Context = _MockContext
+mock_star_module.Star = _MockStar
+mock_star_module.StarTools = _MockStarTools
+mock_star_module.register = _mock_register
+sys.modules["astrbot.api.star"] = mock_star_module
+mock_astrbot_api.AstrBotConfig = dict
+
 # 将插件目录添加到 Python 路径
 PLUGIN_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT))
@@ -55,21 +120,80 @@ sys.modules["astrbot_plugin_jm_cosmos"] = plugin_pkg
 
 # 预先导入核心模块并注册
 from core import base as core_base  # noqa: E402
+from core import auth as core_auth  # noqa: E402
+from core import browser as core_browser  # noqa: E402
 from core import constants as core_constants  # noqa: E402
+from core import downloader as core_downloader  # noqa: E402
+from core import mailer as core_mailer  # noqa: E402
+from core import packer as core_packer  # noqa: E402
+from core import quota as core_quota  # noqa: E402
 
 # 设置 core 子包
 core_pkg = types.ModuleType("astrbot_plugin_jm_cosmos.core")
 core_pkg.__path__ = [str(PLUGIN_ROOT / "core")]
 core_pkg.__package__ = "astrbot_plugin_jm_cosmos.core"
+core_pkg.JMAuthManager = core_auth.JMAuthManager
+core_pkg.JMBrowser = core_browser.JMBrowser
+core_pkg.JMDownloadManager = core_downloader.JMDownloadManager
+core_pkg.DownloadResult = core_downloader.DownloadResult
+core_pkg.JMEmailSender = core_mailer.JMEmailSender
+core_pkg.EmailSendResult = core_mailer.EmailSendResult
+core_pkg.JMPacker = core_packer.JMPacker
+core_pkg.DownloadQuotaManager = core_quota.DownloadQuotaManager
+core_pkg.JMClientMixin = core_base.JMClientMixin
+core_pkg.JMConfigManager = core_base.JMConfigManager
 core_pkg.constants = core_constants
 core_pkg.base = core_base
 sys.modules["astrbot_plugin_jm_cosmos.core"] = core_pkg
 sys.modules["astrbot_plugin_jm_cosmos.core.constants"] = core_constants
+sys.modules["astrbot_plugin_jm_cosmos.core.base"] = core_base
+sys.modules["astrbot_plugin_jm_cosmos.core.auth"] = core_auth
+sys.modules["astrbot_plugin_jm_cosmos.core.browser"] = core_browser
+sys.modules["astrbot_plugin_jm_cosmos.core.downloader"] = core_downloader
+sys.modules["astrbot_plugin_jm_cosmos.core.mailer"] = core_mailer
+sys.modules["astrbot_plugin_jm_cosmos.core.packer"] = core_packer
+sys.modules["astrbot_plugin_jm_cosmos.core.quota"] = core_quota
+
 
 # 设置 utils 子包
+class _MockMessageFormatter:
+    @staticmethod
+    def format_error(error_type: str, detail: str = "") -> str:
+        msg = f"❌ {error_type}"
+        if detail:
+            msg += f"\n详情: {detail}"
+        return msg
+
+    @staticmethod
+    def format_email_error(_result, _pack_result, detail: str) -> str:
+        return f"⚠️ 邮件发送失败: {detail}"
+
+    @staticmethod
+    def format_email_send_result(_result, _pack_result, recipient: str) -> str:
+        return f"📮 已发送到邮箱: {recipient}"
+
+
+def _mock_generate_album_filename(
+    album_id: str,
+    password: str = "",
+    chapter_idx: int | None = None,
+    show_password: bool = False,
+) -> str:
+    suffix = f"_Ch{chapter_idx}" if chapter_idx is not None else ""
+    pw = f"#PW{password}" if show_password and password else ""
+    return f"{album_id}{suffix}{pw}"
+
+
+async def _mock_send_with_recall(_event, _message_chain, _delay: int = 60) -> None:
+    return None
+
+
 utils_pkg = types.ModuleType("astrbot_plugin_jm_cosmos.utils")
 utils_pkg.__path__ = [str(PLUGIN_ROOT / "utils")]
 utils_pkg.__package__ = "astrbot_plugin_jm_cosmos.utils"
+utils_pkg.MessageFormatter = _MockMessageFormatter
+utils_pkg.generate_album_filename = _mock_generate_album_filename
+utils_pkg.send_with_recall = _mock_send_with_recall
 sys.modules["astrbot_plugin_jm_cosmos.utils"] = utils_pkg
 
 

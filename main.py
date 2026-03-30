@@ -147,12 +147,20 @@ class JMCosmosPlugin(Star):
             "recipient": recipient,
         }
 
+    def _validate_email_delivery(self) -> tuple[bool, str]:
+        """检查邮件发送的前置条件"""
+        if self.config_manager.pack_format == "none":
+            return False, "当前打包格式为 none，邮件命令仅支持 zip 或 pdf"
+
+        return self.email_sender.validate_config()
+
     async def _send_file_to_email(
         self, result, pack_result, recipient: str
     ) -> tuple[bool, str]:
         """通过 SMTP 发送文件到邮箱"""
-        if self.config_manager.pack_format == "none":
-            return False, "当前打包格式为 none，邮件命令仅支持 zip 或 pdf"
+        ok, message = self._validate_email_delivery()
+        if not ok:
+            return False, message
 
         if not pack_result.success or not pack_result.output_path:
             return False, pack_result.error_message or "打包失败，无法发送邮件"
@@ -164,6 +172,8 @@ class JMCosmosPlugin(Star):
             body = self.config_manager.email_body_template.format(**context)
         except KeyError as e:
             return False, f"邮件模板变量无效: {e}"
+        except (ValueError, IndexError) as e:
+            return False, f"邮件模板格式无效: {e}"
 
         email_result = await self.email_sender.send_file(
             recipient=recipient,
@@ -524,6 +534,11 @@ class JMCosmosPlugin(Star):
             yield event.plain_result("❌ 邮箱格式无效，请输入正确的邮箱地址")
             return
 
+        ok, message = self._validate_email_delivery()
+        if not ok:
+            yield event.plain_result(f"❌ {message}")
+            return
+
         user_id = event.get_sender_id()
         can_download, quota_msg, limit = self._check_download_quota(user_id)
         if not can_download:
@@ -544,15 +559,14 @@ class JMCosmosPlugin(Star):
                 )
                 return
 
-            if limit > 0:
-                self.quota_manager.consume_quota(user_id)
-
             success, message = await self._send_file_to_email(
                 result,
                 pack_result,
                 recipient_email,
             )
             if success:
+                if limit > 0:
+                    self.quota_manager.consume_quota(user_id)
                 self._cleanup_download_files(result, pack_result)
                 yield event.plain_result(message)
             else:
@@ -617,6 +631,11 @@ class JMCosmosPlugin(Star):
             yield event.plain_result("❌ 邮箱格式无效，请输入正确的邮箱地址")
             return
 
+        ok, message = self._validate_email_delivery()
+        if not ok:
+            yield event.plain_result(f"❌ {message}")
+            return
+
         user_id = event.get_sender_id()
         can_download, quota_msg, limit = self._check_download_quota(user_id)
         if not can_download:
@@ -649,15 +668,14 @@ class JMCosmosPlugin(Star):
                 )
                 return
 
-            if limit > 0:
-                self.quota_manager.consume_quota(user_id)
-
             success, message = await self._send_file_to_email(
                 result,
                 pack_result,
                 recipient_email,
             )
             if success:
+                if limit > 0:
+                    self.quota_manager.consume_quota(user_id)
                 self._cleanup_download_files(result, pack_result)
                 yield event.plain_result(message)
             else:
