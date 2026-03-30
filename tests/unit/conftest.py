@@ -101,6 +101,19 @@ def sample_plugin_config() -> dict[str, Any]:
         "debug_mode": False,
         "jm_username": "",
         "jm_password": "",
+        "smtp_enabled": False,
+        "smtp_host": "",
+        "smtp_port": 465,
+        "smtp_use_ssl": True,
+        "smtp_use_tls": False,
+        "smtp_username": "",
+        "smtp_password": "",
+        "smtp_from_email": "",
+        "smtp_from_name": "JM-Cosmos II",
+        "email_subject_template": "[JM-Cosmos II] {title} ({album_id})",
+        "email_body_template": "下载任务已完成。\n\n标题: {title}",
+        "email_max_attachment_mb": 20,
+        "email_send_timeout": 60,
     }
 
 
@@ -126,6 +139,19 @@ def config_with_admin() -> dict[str, Any]:
         "debug_mode": False,
         "jm_username": "testuser",
         "jm_password": "testpass",
+        "smtp_enabled": True,
+        "smtp_host": "smtp.example.com",
+        "smtp_port": 465,
+        "smtp_use_ssl": True,
+        "smtp_use_tls": False,
+        "smtp_username": "sender@example.com",
+        "smtp_password": "secret",
+        "smtp_from_email": "sender@example.com",
+        "smtp_from_name": "JM-Cosmos II",
+        "email_subject_template": "[JM-Cosmos II] {title} ({album_id})",
+        "email_body_template": "下载任务已完成。\n\n标题: {title}",
+        "email_max_attachment_mb": 20,
+        "email_send_timeout": 60,
     }
 
 

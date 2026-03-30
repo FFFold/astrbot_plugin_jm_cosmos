@@ -66,6 +66,17 @@ class TestConfigManagerDefaults:
         """测试调试模式默认禁用"""
         assert config_manager.debug_mode is False
 
+    def test_smtp_defaults(self, config_manager):
+        """测试 SMTP 默认配置"""
+        assert config_manager.smtp_enabled is False
+        assert config_manager.smtp_host == ""
+        assert config_manager.smtp_port == 465
+        assert config_manager.smtp_use_ssl is True
+        assert config_manager.smtp_use_tls is False
+        assert config_manager.smtp_from_name == "JM-Cosmos II"
+        assert config_manager.email_max_attachment_mb == 20
+        assert config_manager.email_send_timeout == 60
+
 
 class TestAdminPermissions:
     """管理员权限测试"""
@@ -124,6 +135,14 @@ class TestCredentials:
         assert config_manager_with_admin.has_credentials() is True
         assert config_manager_with_admin.jm_username == "testuser"
         assert config_manager_with_admin.jm_password == "testpass"
+
+    def test_smtp_config_when_enabled(self, config_manager_with_admin):
+        """测试启用 SMTP 后的配置读取"""
+        assert config_manager_with_admin.smtp_enabled is True
+        assert config_manager_with_admin.smtp_host == "smtp.example.com"
+        assert config_manager_with_admin.smtp_username == "sender@example.com"
+        assert config_manager_with_admin.smtp_password == "secret"
+        assert config_manager_with_admin.smtp_from_email == "sender@example.com"
 
     def test_cookies_file_path(self, config_manager, data_dir):
         """测试 cookies 文件路径"""

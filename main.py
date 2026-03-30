@@ -4,6 +4,7 @@ JM-Cosmos II - AstrBot JM漫画下载插件
 支持搜索、下载禁漫天堂的漫画本子，基于jmcomic库
 """
 
+import re
 from pathlib import Path
 
 import astrbot.api.message_components as Comp
@@ -17,6 +18,7 @@ from .core import (
     JMBrowser,
     JMConfigManager,
     JMDownloadManager,
+    JMEmailSender,
     JMPacker,
 )
 from .utils import MessageFormatter, generate_album_filename, send_with_recall
@@ -63,6 +65,9 @@ class JMCosmosPlugin(Star):
         # 初始化认证管理器
         self.auth_manager = JMAuthManager(self.config_manager)
 
+        # 初始化邮件发送器
+        self.email_sender = JMEmailSender(self.config_manager)
+
         # 初始化下载配额管理器
         self.quota_manager = DownloadQuotaManager(self.data_dir / "quota.db")
 
@@ -92,6 +97,201 @@ class JMCosmosPlugin(Star):
             return False, MessageFormatter.format_error("group_disabled")
 
         return True, ""
+
+    @staticmethod
+    def _is_valid_email(email: str) -> bool:
+        """校验邮箱格式"""
+        return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email))
+
+    def _check_download_quota(self, user_id: str) -> tuple[bool, str, int]:
+        """检查下载配额"""
+        limit = self.config_manager.daily_download_limit
+        is_admin = str(user_id) in self.config_manager.admin_list
+        if limit > 0 and not is_admin:
+            can_download, used, total = self.quota_manager.check_quota(user_id, limit)
+            if not can_download:
+                return (
+                    False,
+                    f"❌ 今日下载次数已达上限 ({used}/{total})\n请明天再试",
+                    limit,
+                )
+
+        return True, "", limit
+
+    def _build_packer(self) -> JMPacker:
+        """创建打包器"""
+        return JMPacker(
+            pack_format=self.config_manager.pack_format,
+            password=self.config_manager.pack_password,
+        )
+
+    def _cleanup_download_files(self, result, pack_result) -> None:
+        """清理下载和打包产物"""
+        if self.config_manager.auto_delete_after_send:
+            JMPacker.cleanup(result.save_path)
+            if pack_result.output_path and pack_result.format != "none":
+                JMPacker.cleanup(pack_result.output_path)
+
+    def _build_email_context(
+        self, result, pack_result, recipient: str
+    ) -> dict[str, str]:
+        """构建邮件模板上下文"""
+        return {
+            "album_id": result.album_id,
+            "title": result.title or result.album_id,
+            "author": result.author or "未知",
+            "photo_count": str(result.photo_count),
+            "image_count": str(result.image_count),
+            "pack_format": pack_result.format,
+            "encrypted": "是" if pack_result.encrypted else "否",
+            "recipient": recipient,
+        }
+
+    async def _send_file_to_email(
+        self, result, pack_result, recipient: str
+    ) -> tuple[bool, str]:
+        """通过 SMTP 发送文件到邮箱"""
+        if self.config_manager.pack_format == "none":
+            return False, "当前打包格式为 none，邮件命令仅支持 zip 或 pdf"
+
+        if not pack_result.success or not pack_result.output_path:
+            return False, pack_result.error_message or "打包失败，无法发送邮件"
+
+        context = self._build_email_context(result, pack_result, recipient)
+
+        try:
+            subject = self.config_manager.email_subject_template.format(**context)
+            body = self.config_manager.email_body_template.format(**context)
+        except KeyError as e:
+            return False, f"邮件模板变量无效: {e}"
+
+        email_result = await self.email_sender.send_file(
+            recipient=recipient,
+            file_path=pack_result.output_path,
+            subject=subject,
+            body=body,
+        )
+
+        if not email_result.success:
+            return False, email_result.error_message or "邮件发送失败"
+
+        return True, MessageFormatter.format_email_send_result(
+            result,
+            pack_result,
+            recipient,
+        )
+
+    async def _send_file_to_platform(
+        self, event: AstrMessageEvent, result_msg: str, pack_result
+    ):
+        """发送文件到当前消息平台并返回结果对象"""
+        file_path_str = str(pack_result.output_path)
+        logger.info(f"准备发送文件: {file_path_str}")
+
+        from astrbot.api.event import MessageChain
+
+        file_chain = MessageChain(
+            [
+                Comp.Plain(result_msg),
+                Comp.File(
+                    name=pack_result.output_path.name,
+                    file=file_path_str,
+                ),
+            ]
+        )
+
+        if self.config_manager.auto_recall_enabled:
+            await send_with_recall(
+                event,
+                file_chain,
+                self.config_manager.auto_recall_delay,
+            )
+            return None
+        else:
+            return event.chain_result(file_chain.chain)
+
+    async def _prepare_album_download(self, album_id: str):
+        """下载并打包整本漫画"""
+        result = await self.download_manager.download_album(album_id)
+        if not result.success:
+            return result, None
+
+        output_name = generate_album_filename(
+            album_id=album_id,
+            password=self.config_manager.pack_password,
+            show_password=self.config_manager.filename_show_password,
+        )
+        pack_result = self._build_packer().pack(
+            source_dir=result.save_path,
+            output_name=output_name,
+        )
+        return result, pack_result
+
+    async def _prepare_photo_download(self, album_id: str, chapter_idx: int):
+        """下载并打包单章节漫画"""
+        chapter_info = await self.browser.get_photo_id_by_index(album_id, chapter_idx)
+        if chapter_info is None:
+            return None, None, None
+
+        photo_id, photo_title, total_chapters = chapter_info
+        result = await self.download_manager.download_photo(photo_id)
+        if not result.success:
+            return result, None, (photo_title, total_chapters)
+
+        output_name = generate_album_filename(
+            album_id=album_id,
+            password=self.config_manager.pack_password,
+            chapter_idx=chapter_idx,
+            show_password=self.config_manager.filename_show_password,
+        )
+        pack_result = self._build_packer().pack(
+            source_dir=result.save_path,
+            output_name=output_name,
+        )
+        return result, pack_result, (photo_title, total_chapters)
+
+    async def _send_cover_preview_if_needed(
+        self, event: AstrMessageEvent, album_id: str
+    ) -> None:
+        """按配置发送封面预览"""
+        if not self.config_manager.send_cover_preview:
+            return
+
+        detail = await self.browser.get_album_detail(album_id)
+        if not detail:
+            return
+
+        cover_dir = self.config_manager.download_dir / "covers"
+        cover_path = await self.browser.get_album_cover(album_id, cover_dir)
+
+        if cover_path and cover_path.exists():
+            from astrbot.api.event import MessageChain
+
+            cover_chain = MessageChain(
+                [
+                    Comp.Image(file=str(cover_path)),
+                    Comp.Plain(MessageFormatter.format_album_info(detail)),
+                ]
+            )
+
+            if self.config_manager.cover_recall_enabled:
+                await send_with_recall(
+                    event,
+                    cover_chain,
+                    self.config_manager.auto_recall_delay,
+                )
+            else:
+                yield_result = event.chain_result(cover_chain.chain)
+                if yield_result is not None:
+                    return yield_result
+        else:
+            plain_result = event.plain_result(
+                MessageFormatter.format_album_info(detail)
+            )
+            if plain_result is not None:
+                return plain_result
+
+        return None
 
     @filter.command("jmhelp")
     async def help_command(self, event: AstrMessageEvent):
@@ -127,57 +327,21 @@ class JMCosmosPlugin(Star):
             yield event.plain_result(MessageFormatter.format_error("invalid_id"))
             return
 
-        # 检查下载配额（管理员豁免）
         user_id = event.get_sender_id()
-        limit = self.config_manager.daily_download_limit
-        is_admin = str(user_id) in self.config_manager.admin_list
-        if limit > 0 and not is_admin:
-            can_download, used, total = self.quota_manager.check_quota(user_id, limit)
-            if not can_download:
-                yield event.plain_result(
-                    f"❌ 今日下载次数已达上限 ({used}/{total})\n请明天再试"
-                )
-                return
+        can_download, quota_msg, limit = self._check_download_quota(user_id)
+        if not can_download:
+            yield event.plain_result(quota_msg)
+            return
 
         try:
             # 发送开始下载提示
             yield event.plain_result(f"⏳ 开始下载本子 {album_id}，请稍候...")
 
-            # 如果配置了发送封面预览，获取详情和封面
-            if self.config_manager.send_cover_preview:
-                detail = await self.browser.get_album_detail(album_id)
-                if detail:
-                    # 获取封面图片
-                    cover_dir = self.config_manager.download_dir / "covers"
-                    cover_path = await self.browser.get_album_cover(album_id, cover_dir)
+            preview_result = await self._send_cover_preview_if_needed(event, album_id)
+            if preview_result is not None:
+                yield preview_result
 
-                    if cover_path and cover_path.exists():
-                        # 构建封面消息链
-                        from astrbot.api.event import MessageChain
-
-                        cover_chain = MessageChain(
-                            [
-                                Comp.Image(file=str(cover_path)),
-                                Comp.Plain(MessageFormatter.format_album_info(detail)),
-                            ]
-                        )
-
-                        # 根据配置决定是否对封面消息自动撤回
-                        if self.config_manager.cover_recall_enabled:
-                            await send_with_recall(
-                                event,
-                                cover_chain,
-                                self.config_manager.auto_recall_delay,
-                            )
-                        else:
-                            yield event.chain_result(cover_chain.chain)
-                    else:
-                        yield event.plain_result(
-                            MessageFormatter.format_album_info(detail)
-                        )
-
-            # 执行下载
-            result = await self.download_manager.download_album(album_id)
+            result, pack_result = await self._prepare_album_download(album_id)
 
             if not result.success:
                 yield event.plain_result(
@@ -187,26 +351,6 @@ class JMCosmosPlugin(Star):
                 )
                 return
 
-            # 生成文件名
-            output_name = generate_album_filename(
-                album_id=album_id,
-                password=self.config_manager.pack_password,
-                show_password=self.config_manager.filename_show_password,
-            )
-
-            # 打包文件
-            packer = JMPacker(
-                pack_format=self.config_manager.pack_format,
-                password=self.config_manager.pack_password,
-            )
-
-            pack_result = packer.pack(
-                source_dir=result.save_path,
-                output_name=output_name,
-            )
-
-            # 发送结果消息
-            # 下载成功，消耗配额
             if limit > 0:
                 self.quota_manager.consume_quota(user_id)
 
@@ -217,37 +361,15 @@ class JMCosmosPlugin(Star):
                 and pack_result.output_path
                 and pack_result.format != "none"
             ):
-                # 构建文件路径 - 调试输出
-                file_path_str = str(pack_result.output_path)
-                logger.info(f"准备发送文件: {file_path_str}")
-
-                # 构建消息链
-                from astrbot.api.event import MessageChain
-
-                file_chain = MessageChain(
-                    [
-                        Comp.Plain(result_msg),
-                        Comp.File(
-                            name=pack_result.output_path.name,
-                            file=file_path_str,
-                        ),
-                    ]
+                platform_result = await self._send_file_to_platform(
+                    event,
+                    result_msg,
+                    pack_result,
                 )
+                if platform_result is not None:
+                    yield platform_result
 
-                # 根据配置决定是否使用自动撤回
-                if self.config_manager.auto_recall_enabled:
-                    await send_with_recall(
-                        event,
-                        file_chain,
-                        self.config_manager.auto_recall_delay,
-                    )
-                else:
-                    yield event.chain_result(file_chain.chain)
-
-                # 自动清理
-                if self.config_manager.auto_delete_after_send:
-                    JMPacker.cleanup(result.save_path)
-                    JMPacker.cleanup(pack_result.output_path)
+                self._cleanup_download_files(result, pack_result)
             else:
                 yield event.plain_result(result_msg)
 
@@ -299,29 +421,23 @@ class JMCosmosPlugin(Star):
             yield event.plain_result("❌ 章节序号必须是数字")
             return
 
-        # 检查下载配额（管理员豁免）
         user_id = event.get_sender_id()
-        limit = self.config_manager.daily_download_limit
-        is_admin = str(user_id) in self.config_manager.admin_list
-        if limit > 0 and not is_admin:
-            can_download, used, total = self.quota_manager.check_quota(user_id, limit)
-            if not can_download:
-                yield event.plain_result(
-                    f"❌ 今日下载次数已达上限 ({used}/{total})\n请明天再试"
-                )
-                return
+        can_download, quota_msg, limit = self._check_download_quota(user_id)
+        if not can_download:
+            yield event.plain_result(quota_msg)
+            return
 
         try:
             yield event.plain_result(
                 f"⏳ 正在获取本子 {album_id} 的第 {chapter_idx} 章节信息..."
             )
 
-            # 获取章节的真正 photo_id
-            chapter_info = await self.browser.get_photo_id_by_index(
-                album_id, chapter_idx
+            result, pack_result, chapter_meta = await self._prepare_photo_download(
+                album_id,
+                chapter_idx,
             )
 
-            if chapter_info is None:
+            if result is None:
                 yield event.plain_result(
                     f"❌ 无法获取章节信息\n可能的原因:\n"
                     f"• 本子 {album_id} 不存在\n"
@@ -329,16 +445,13 @@ class JMCosmosPlugin(Star):
                 )
                 return
 
-            photo_id, photo_title, total_chapters = chapter_info
+            photo_title, total_chapters = chapter_meta
 
             yield event.plain_result(
                 f"📖 找到章节: {photo_title}\n"
                 f"📚 章节: {chapter_idx}/{total_chapters}\n"
                 f"⏳ 开始下载..."
             )
-
-            # 使用真正的 photo_id 下载
-            result = await self.download_manager.download_photo(photo_id)
 
             if not result.success:
                 yield event.plain_result(
@@ -348,26 +461,6 @@ class JMCosmosPlugin(Star):
                 )
                 return
 
-            # 生成文件名（带章节号）
-            output_name = generate_album_filename(
-                album_id=album_id,
-                password=self.config_manager.pack_password,
-                chapter_idx=chapter_idx,
-                show_password=self.config_manager.filename_show_password,
-            )
-
-            # 打包
-            packer = JMPacker(
-                pack_format=self.config_manager.pack_format,
-                password=self.config_manager.pack_password,
-            )
-
-            pack_result = packer.pack(
-                source_dir=result.save_path,
-                output_name=output_name,
-            )
-
-            # 下载成功，消耗配额
             if limit > 0:
                 self.quota_manager.consume_quota(user_id)
 
@@ -378,40 +471,202 @@ class JMCosmosPlugin(Star):
                 and pack_result.output_path
                 and pack_result.format != "none"
             ):
-                file_path_str = str(pack_result.output_path)
-                logger.info(f"准备发送章节文件: {file_path_str}")
-
-                # 构建消息链
-                from astrbot.api.event import MessageChain
-
-                file_chain = MessageChain(
-                    [
-                        Comp.Plain(result_msg),
-                        Comp.File(
-                            name=pack_result.output_path.name,
-                            file=file_path_str,
-                        ),
-                    ]
+                platform_result = await self._send_file_to_platform(
+                    event,
+                    result_msg,
+                    pack_result,
                 )
+                if platform_result is not None:
+                    yield platform_result
 
-                # 根据配置决定是否使用自动撤回
-                if self.config_manager.auto_recall_enabled:
-                    await send_with_recall(
-                        event,
-                        file_chain,
-                        self.config_manager.auto_recall_delay,
-                    )
-                else:
-                    yield event.chain_result(file_chain.chain)
-
-                if self.config_manager.auto_delete_after_send:
-                    JMPacker.cleanup(result.save_path)
-                    JMPacker.cleanup(pack_result.output_path)
+                self._cleanup_download_files(result, pack_result)
             else:
                 yield event.plain_result(result_msg)
 
         except Exception as e:
             logger.error(f"下载章节失败: {e}")
+            yield event.plain_result(
+                MessageFormatter.format_error("download_failed", str(e))
+            )
+
+    @filter.command("jmemail")
+    async def download_album_email_command(
+        self,
+        event: AstrMessageEvent,
+        album_id: str = None,
+        recipient_email: str = None,
+    ):
+        """
+        下载指定 ID 的漫画并发送到邮箱
+
+        用法: /jmemail <ID> <邮箱>
+        示例: /jmemail 123456 user@example.com
+        """
+        has_perm, error_msg = self._check_permission(event)
+        if not has_perm:
+            yield event.plain_result(error_msg)
+            return
+
+        if album_id is None or recipient_email is None:
+            yield event.plain_result(
+                "❌ 请提供本子ID和邮箱\n用法: /jmemail <ID> <邮箱>\n示例: /jmemail 123456 user@example.com"
+            )
+            return
+
+        album_id = str(album_id).strip()
+        recipient_email = str(recipient_email).strip()
+
+        if not album_id.isdigit():
+            yield event.plain_result(MessageFormatter.format_error("invalid_id"))
+            return
+
+        if not self._is_valid_email(recipient_email):
+            yield event.plain_result("❌ 邮箱格式无效，请输入正确的邮箱地址")
+            return
+
+        user_id = event.get_sender_id()
+        can_download, quota_msg, limit = self._check_download_quota(user_id)
+        if not can_download:
+            yield event.plain_result(quota_msg)
+            return
+
+        try:
+            yield event.plain_result(
+                f"📮 开始下载本子 {album_id} 并发送到邮箱 {recipient_email}，请稍候..."
+            )
+
+            result, pack_result = await self._prepare_album_download(album_id)
+            if not result.success:
+                yield event.plain_result(
+                    MessageFormatter.format_error(
+                        "download_failed", result.error_message
+                    )
+                )
+                return
+
+            if limit > 0:
+                self.quota_manager.consume_quota(user_id)
+
+            success, message = await self._send_file_to_email(
+                result,
+                pack_result,
+                recipient_email,
+            )
+            if success:
+                self._cleanup_download_files(result, pack_result)
+                yield event.plain_result(message)
+            else:
+                yield event.plain_result(
+                    MessageFormatter.format_email_error(result, pack_result, message)
+                )
+
+        except Exception as e:
+            logger.error(f"邮件发送本子失败: {e}")
+            if self.debug_mode:
+                import traceback
+
+                logger.error(traceback.format_exc())
+            yield event.plain_result(
+                MessageFormatter.format_error("download_failed", str(e))
+            )
+
+    @filter.command("jmcemail")
+    async def download_photo_email_command(
+        self,
+        event: AstrMessageEvent,
+        album_id: str = None,
+        chapter_index: str = None,
+        recipient_email: str = None,
+    ):
+        """
+        下载指定章节并发送到邮箱
+
+        用法: /jmcemail <本子ID> <章节序号> <邮箱>
+        示例: /jmcemail 123456 3 user@example.com
+        """
+        has_perm, error_msg = self._check_permission(event)
+        if not has_perm:
+            yield event.plain_result(error_msg)
+            return
+
+        if album_id is None or chapter_index is None or recipient_email is None:
+            yield event.plain_result(
+                "❌ 请提供本子ID、章节序号和邮箱\n"
+                "用法: /jmcemail <本子ID> <章节序号> <邮箱>\n"
+                "示例: /jmcemail 123456 3 user@example.com"
+            )
+            return
+
+        album_id = str(album_id).strip()
+        recipient_email = str(recipient_email).strip()
+
+        if not album_id.isdigit():
+            yield event.plain_result(MessageFormatter.format_error("invalid_id"))
+            return
+
+        try:
+            chapter_idx = int(chapter_index)
+            if chapter_idx < 1:
+                yield event.plain_result("❌ 章节序号必须大于0")
+                return
+        except ValueError:
+            yield event.plain_result("❌ 章节序号必须是数字")
+            return
+
+        if not self._is_valid_email(recipient_email):
+            yield event.plain_result("❌ 邮箱格式无效，请输入正确的邮箱地址")
+            return
+
+        user_id = event.get_sender_id()
+        can_download, quota_msg, limit = self._check_download_quota(user_id)
+        if not can_download:
+            yield event.plain_result(quota_msg)
+            return
+
+        try:
+            yield event.plain_result(
+                f"📮 开始下载本子 {album_id} 的第 {chapter_idx} 章节并发送到邮箱 {recipient_email}..."
+            )
+
+            result, pack_result, chapter_meta = await self._prepare_photo_download(
+                album_id,
+                chapter_idx,
+            )
+
+            if result is None:
+                yield event.plain_result(
+                    f"❌ 无法获取章节信息\n可能的原因:\n"
+                    f"• 本子 {album_id} 不存在\n"
+                    f"• 第 {chapter_idx} 章节不存在"
+                )
+                return
+
+            if not result.success:
+                yield event.plain_result(
+                    MessageFormatter.format_error(
+                        "download_failed", result.error_message
+                    )
+                )
+                return
+
+            if limit > 0:
+                self.quota_manager.consume_quota(user_id)
+
+            success, message = await self._send_file_to_email(
+                result,
+                pack_result,
+                recipient_email,
+            )
+            if success:
+                self._cleanup_download_files(result, pack_result)
+                yield event.plain_result(message)
+            else:
+                yield event.plain_result(
+                    MessageFormatter.format_email_error(result, pack_result, message)
+                )
+
+        except Exception as e:
+            logger.error(f"邮件发送章节失败: {e}")
             yield event.plain_result(
                 MessageFormatter.format_error("download_failed", str(e))
             )

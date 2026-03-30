@@ -328,6 +328,20 @@ day(今日) week(本周) month(本月) all(全部)
         return "\n".join(lines)
 
     @staticmethod
+    def format_email_send_result(result, pack_result, recipient: str) -> str:
+        """格式化邮件发送成功结果"""
+        lines = [MessageFormatter.format_download_result(result, pack_result)]
+        lines.append(f"📮 已发送到邮箱: {recipient}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_email_error(result, pack_result, detail: str) -> str:
+        """格式化邮件发送失败结果"""
+        lines = [MessageFormatter.format_download_result(result, pack_result)]
+        lines.append(f"⚠️ 邮件发送失败: {detail}")
+        return "\n".join(lines)
+
+    @staticmethod
     def format_download_progress(status: str, current: int, total: int) -> str:
         """
         格式化下载进度
@@ -362,6 +376,8 @@ day(今日) week(本周) month(本月) all(全部)
 【基本命令】
 /jm <ID>     - 下载指定ID的本子
 /jmc <ID> <章节> - 下载指定本子的指定章节
+/jmemail <ID> <邮箱> - 下载本子并发送到邮箱
+/jmcemail <ID> <章节> <邮箱> - 下载章节并发送到邮箱
 /jms <关键词> [页码] - 搜索漫画
 /jmi <ID>    - 查看本子详情
 /jmrank      - 查看排行榜
@@ -376,6 +392,7 @@ day(今日) week(本周) month(本月) all(全部)
 
 【使用示例】
 /jm 123456       - 下载ID为123456的本子
+/jmemail 123456 user@example.com - 下载并发送到邮箱
 /jms 标签名 2    - 搜索包含该标签的漫画（第2页）
 /jmrank week     - 查看周排行榜
 /jmrec hanman    - 浏览韩漫热门

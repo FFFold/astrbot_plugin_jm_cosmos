@@ -141,6 +141,84 @@ class JMConfigManager:
         return self.plugin_config.get("jm_password", "")
 
     @property
+    def smtp_enabled(self) -> bool:
+        """是否启用 SMTP 邮件发送"""
+        return self.plugin_config.get("smtp_enabled", False)
+
+    @property
+    def smtp_host(self) -> str:
+        """SMTP 服务器地址"""
+        return self.plugin_config.get("smtp_host", "")
+
+    @property
+    def smtp_port(self) -> int:
+        """SMTP 端口"""
+        return self.plugin_config.get("smtp_port", 465)
+
+    @property
+    def smtp_use_ssl(self) -> bool:
+        """SMTP 是否使用 SSL"""
+        return self.plugin_config.get("smtp_use_ssl", True)
+
+    @property
+    def smtp_use_tls(self) -> bool:
+        """SMTP 是否使用 STARTTLS"""
+        return self.plugin_config.get("smtp_use_tls", False)
+
+    @property
+    def smtp_username(self) -> str:
+        """SMTP 用户名"""
+        return self.plugin_config.get("smtp_username", "")
+
+    @property
+    def smtp_password(self) -> str:
+        """SMTP 密码或授权码"""
+        return self.plugin_config.get("smtp_password", "")
+
+    @property
+    def smtp_from_email(self) -> str:
+        """SMTP 发件邮箱"""
+        return self.plugin_config.get("smtp_from_email", "")
+
+    @property
+    def smtp_from_name(self) -> str:
+        """SMTP 发件人名称"""
+        return self.plugin_config.get("smtp_from_name", "JM-Cosmos II")
+
+    @property
+    def email_subject_template(self) -> str:
+        """邮件主题模板"""
+        return self.plugin_config.get(
+            "email_subject_template", "[JM-Cosmos II] {title} ({album_id})"
+        )
+
+    @property
+    def email_body_template(self) -> str:
+        """邮件正文模板"""
+        return self.plugin_config.get(
+            "email_body_template",
+            "下载任务已完成。\n\n"
+            "标题: {title}\n"
+            "本子ID: {album_id}\n"
+            "作者: {author}\n"
+            "章节数: {photo_count}\n"
+            "图片数: {image_count}\n"
+            "打包格式: {pack_format}\n"
+            "已加密: {encrypted}\n"
+            "收件人: {recipient}",
+        )
+
+    @property
+    def email_max_attachment_mb(self) -> int:
+        """邮件附件大小限制（MB）"""
+        return self.plugin_config.get("email_max_attachment_mb", 20)
+
+    @property
+    def email_send_timeout(self) -> int:
+        """邮件发送超时时间（秒）"""
+        return self.plugin_config.get("email_send_timeout", 60)
+
+    @property
     def auto_recall_enabled(self) -> bool:
         """是否启用自动撤回"""
         return self.plugin_config.get("auto_recall_enabled", False)

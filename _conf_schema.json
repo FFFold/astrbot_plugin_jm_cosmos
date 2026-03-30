@@ -133,6 +133,84 @@
     "hint": "配合用户名使用，支持自动登录（可选）",
     "default": ""
   },
+  "smtp_enabled": {
+    "type": "bool",
+    "description": "启用SMTP邮箱发送",
+    "hint": "开启后可使用 /jmemail 和 /jmcemail 命令发送加密附件到邮箱",
+    "default": false
+  },
+  "smtp_host": {
+    "type": "string",
+    "description": "SMTP服务器地址",
+    "hint": "例如 smtp.qq.com、smtp.gmail.com",
+    "default": ""
+  },
+  "smtp_port": {
+    "type": "int",
+    "description": "SMTP端口",
+    "hint": "SSL 常用 465，STARTTLS 常用 587",
+    "default": 465
+  },
+  "smtp_use_ssl": {
+    "type": "bool",
+    "description": "SMTP使用SSL",
+    "hint": "通常与 465 端口配合使用，建议与 STARTTLS 二选一",
+    "default": true
+  },
+  "smtp_use_tls": {
+    "type": "bool",
+    "description": "SMTP使用STARTTLS",
+    "hint": "通常与 587 端口配合使用，建议与 SSL 二选一",
+    "default": false
+  },
+  "smtp_username": {
+    "type": "string",
+    "description": "SMTP登录用户名",
+    "hint": "通常为发件邮箱地址",
+    "default": ""
+  },
+  "smtp_password": {
+    "type": "string",
+    "description": "SMTP登录密码或授权码",
+    "hint": "请填写邮箱服务商提供的 SMTP 密码或授权码",
+    "default": ""
+  },
+  "smtp_from_email": {
+    "type": "string",
+    "description": "发件邮箱地址",
+    "hint": "邮件发件人地址",
+    "default": ""
+  },
+  "smtp_from_name": {
+    "type": "string",
+    "description": "发件人名称",
+    "hint": "邮件中显示的发件人名称",
+    "default": "JM-Cosmos II"
+  },
+  "email_subject_template": {
+    "type": "string",
+    "description": "邮件主题模板",
+    "hint": "支持 {album_id}、{title}、{recipient}、{pack_format} 等变量",
+    "default": "[JM-Cosmos II] {title} ({album_id})"
+  },
+  "email_body_template": {
+    "type": "text",
+    "description": "邮件正文模板",
+    "hint": "支持 {album_id}、{title}、{author}、{image_count}、{photo_count}、{pack_format}、{encrypted}、{recipient}",
+    "default": "下载任务已完成。\n\n标题: {title}\n本子ID: {album_id}\n作者: {author}\n章节数: {photo_count}\n图片数: {image_count}\n打包格式: {pack_format}\n已加密: {encrypted}\n收件人: {recipient}"
+  },
+  "email_max_attachment_mb": {
+    "type": "int",
+    "description": "邮箱附件大小限制(MB)",
+    "hint": "超过该大小将拒绝发送，以避免 SMTP 附件超限",
+    "default": 20
+  },
+  "email_send_timeout": {
+    "type": "int",
+    "description": "邮箱发送超时时间(秒)",
+    "hint": "SMTP 连接、登录与发送的超时时间",
+    "default": 60
+  },
   "search_page_size": {
     "type": "int",
     "description": "搜索结果每页数量",
