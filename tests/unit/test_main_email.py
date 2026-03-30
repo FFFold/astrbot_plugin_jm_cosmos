@@ -108,6 +108,49 @@ async def test_jmemail_checks_delivery_preconditions_before_download():
 
 
 @pytest.mark.asyncio
+async def test_jmemail_rejects_invalid_email_before_download():
+    """邮箱格式无效时不应开始下载"""
+    plugin = build_plugin()
+    plugin._prepare_album_download = AsyncMock(
+        side_effect=AssertionError("should not run")
+    )
+
+    results = [
+        item
+        async for item in plugin.download_album_email_command(
+            FakeEvent(),
+            "123456",
+            "not-an-email",
+        )
+    ]
+
+    assert results == ["❌ 邮箱格式无效，请输入正确的邮箱地址"]
+    assert plugin._prepare_album_download.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_jmemail_stops_when_quota_check_fails():
+    """配额不足时不应开始下载"""
+    plugin = build_plugin()
+    plugin._check_download_quota = MagicMock(return_value=(False, "额度不足", 3))
+    plugin._prepare_album_download = AsyncMock(
+        side_effect=AssertionError("should not run")
+    )
+
+    results = [
+        item
+        async for item in plugin.download_album_email_command(
+            FakeEvent(),
+            "123456",
+            "user@example.com",
+        )
+    ]
+
+    assert results == ["额度不足"]
+    assert plugin._prepare_album_download.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_jmemail_does_not_consume_quota_when_send_fails():
     """邮件发送失败时不应消耗配额"""
     plugin = build_plugin()
@@ -205,6 +248,75 @@ async def test_jmemail_consumes_quota_after_send_success():
     plugin.quota_manager.consume_quota.assert_called_once_with("10001")
     plugin._cleanup_download_files.assert_called_once_with(result, pack_result)
     assert results[-1] == "发送成功"
+
+
+@pytest.mark.asyncio
+async def test_jmemail_download_failure_skips_quota_and_cleanup():
+    """下载失败时不应扣配额或清理文件"""
+    plugin = build_plugin()
+    failed_result = SimpleNamespace(
+        success=False,
+        error_message="下载失败",
+    )
+    plugin._prepare_album_download = AsyncMock(return_value=(failed_result, None))
+
+    results = [
+        item
+        async for item in plugin.download_album_email_command(
+            FakeEvent(),
+            "123456",
+            "user@example.com",
+        )
+    ]
+
+    assert any("下载失败" in item for item in results)
+    assert plugin.quota_manager.consume_quota.call_count == 0
+    assert plugin._cleanup_download_files.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_jmcemail_returns_not_found_message_when_chapter_missing():
+    """章节不存在时应返回与 jmc 一致的错误信息"""
+    plugin = build_plugin()
+    plugin._prepare_photo_download = AsyncMock(return_value=(None, None, None))
+
+    results = [
+        item
+        async for item in plugin.download_photo_email_command(
+            FakeEvent(),
+            "123456",
+            "3",
+            "user@example.com",
+        )
+    ]
+
+    assert results[1] == (
+        "❌ 无法获取章节信息\n可能的原因:\n• 本子 123456 不存在\n• 第 3 章节不存在"
+    )
+
+
+@pytest.mark.asyncio
+async def test_jmcemail_download_failure_skips_quota_and_cleanup():
+    """章节下载失败时不应扣配额或清理文件"""
+    plugin = build_plugin()
+    failed_result = SimpleNamespace(success=False, error_message="章节下载失败")
+    plugin._prepare_photo_download = AsyncMock(
+        return_value=(failed_result, None, ("第3话", 12))
+    )
+
+    results = [
+        item
+        async for item in plugin.download_photo_email_command(
+            FakeEvent(),
+            "123456",
+            "3",
+            "user@example.com",
+        )
+    ]
+
+    assert any("章节下载失败" in item for item in results)
+    assert plugin.quota_manager.consume_quota.call_count == 0
+    assert plugin._cleanup_download_files.call_count == 0
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ import smtplib
 import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
+from email.utils import make_msgid
 from pathlib import Path
 
 from astrbot.api import logger
@@ -120,6 +121,7 @@ class JMEmailSender(JMClientMixin):
                 else self.config.smtp_from_email
             )
             message["To"] = recipient
+            message["Message-ID"] = make_msgid()
             message.set_content(body)
 
             mime_type, _ = mimetypes.guess_type(file_path.name)
@@ -160,12 +162,22 @@ class JMEmailSender(JMClientMixin):
 
             if response:
                 return EmailSendResult(
-                    False, recipient, f"部分收件人发送失败: {response}"
+                    False,
+                    recipient,
+                    f"部分收件人发送失败: {response}",
+                    str(message["Message-ID"]),
                 )
 
             logger.info(f"邮件发送成功: {recipient} <- {file_path.name}")
-            return EmailSendResult(True, recipient)
+            return EmailSendResult(
+                True, recipient, message_id=str(message["Message-ID"])
+            )
 
         except Exception as e:
             logger.error(f"SMTP 发送失败 ({recipient}): {e}")
-            return EmailSendResult(False, recipient, str(e))
+            return EmailSendResult(
+                False,
+                recipient,
+                str(e),
+                str(message["Message-ID"]) if "message" in locals() else None,
+            )

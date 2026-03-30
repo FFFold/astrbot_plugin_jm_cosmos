@@ -158,10 +158,6 @@ class JMCosmosPlugin(Star):
         self, result, pack_result, recipient: str
     ) -> tuple[bool, str]:
         """通过 SMTP 发送文件到邮箱"""
-        ok, message = self._validate_email_delivery()
-        if not ok:
-            return False, message
-
         if not pack_result.success or not pack_result.output_path:
             return False, pack_result.error_message or "打包失败，无法发送邮件"
 
@@ -262,8 +258,11 @@ class JMCosmosPlugin(Star):
 
     async def _send_cover_preview_if_needed(
         self, event: AstrMessageEvent, album_id: str
-    ) -> None:
-        """按配置发送封面预览"""
+    ) -> object | None:
+        """按配置发送封面预览。
+
+        返回非 None 时，调用方应将其 yield 给框架发送。
+        """
         if not self.config_manager.send_cover_preview:
             return
 

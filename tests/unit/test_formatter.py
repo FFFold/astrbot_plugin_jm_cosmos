@@ -5,12 +5,32 @@
 注意：由于 formatter.py 使用相对导入，我们直接复制格式化逻辑进行测试。
 """
 
+import importlib.util
+import sys
+from pathlib import Path
+
 
 # 由于 utils/formatter.py 使用相对导入 (from ..core.constants)，
 # 在独立测试环境中难以正确导入。
 # 这里我们创建一个测试用的简化版 MessageFormatter 来验证逻辑。
 
 from core.constants import CATEGORY_NAMES, ORDER_NAMES, TIME_NAMES
+
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+FORMATTER_PATH = PLUGIN_ROOT / "utils" / "formatter.py"
+FORMATTER_MODULE_NAME = "astrbot_plugin_jm_cosmos.utils.formatter_real"
+
+if FORMATTER_MODULE_NAME in sys.modules:
+    formatter_module = sys.modules[FORMATTER_MODULE_NAME]
+else:
+    spec = importlib.util.spec_from_file_location(FORMATTER_MODULE_NAME, FORMATTER_PATH)
+    formatter_module = importlib.util.module_from_spec(spec)
+    sys.modules[FORMATTER_MODULE_NAME] = formatter_module
+    assert spec.loader is not None
+    spec.loader.exec_module(formatter_module)
+
+RealMessageFormatter = formatter_module.MessageFormatter
 
 
 class TestMessageFormatterLogic:
@@ -168,11 +188,41 @@ class TestFormatDownloadResult:
 
     def test_format_email_result_contains_recipient(self):
         """测试邮件发送结果格式化包含收件人"""
+        from unittest.mock import MagicMock
+
         recipient = "user@example.com"
-        formatted = f"✅ 下载完成！\n📮 已发送到邮箱: {recipient}"
+
+        result = MagicMock()
+        result.success = True
+        result.title = "测试本子"
+        result.author = "测试作者"
+        result.photo_count = 2
+        result.image_count = 10
+
+        pack_result = MagicMock()
+        pack_result.success = True
+        pack_result.output_path = "demo.zip"
+        pack_result.format = "zip"
+        pack_result.encrypted = False
+        pack_result.error_message = None
+
+        formatted = RealMessageFormatter.format_email_send_result(
+            result,
+            pack_result,
+            recipient,
+        )
+
+        error_formatted = RealMessageFormatter.format_email_error(
+            result,
+            pack_result,
+            "SMTP 连接失败",
+        )
 
         assert "已发送到邮箱" in formatted
         assert recipient in formatted
+        assert "邮件发送失败" in error_formatted
+        assert "SMTP 连接失败" in error_formatted
+        assert "测试本子" in error_formatted
 
 
 class TestFormatHelp:
