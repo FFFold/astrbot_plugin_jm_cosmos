@@ -550,6 +550,10 @@ class JMCosmosPlugin(Star):
                 f"📮 开始下载本子 {album_id} 并发送到邮箱 {recipient_email}，请稍候..."
             )
 
+            preview_result = await self._send_cover_preview_if_needed(event, album_id)
+            if preview_result is not None:
+                yield preview_result
+
             result, pack_result = await self._prepare_album_download(album_id)
             if not result.success:
                 yield event.plain_result(
@@ -644,7 +648,7 @@ class JMCosmosPlugin(Star):
 
         try:
             yield event.plain_result(
-                f"📮 开始下载本子 {album_id} 的第 {chapter_idx} 章节并发送到邮箱 {recipient_email}..."
+                f"⏳ 正在获取本子 {album_id} 的第 {chapter_idx} 章节信息..."
             )
 
             result, pack_result, chapter_meta = await self._prepare_photo_download(
@@ -659,6 +663,14 @@ class JMCosmosPlugin(Star):
                     f"• 第 {chapter_idx} 章节不存在"
                 )
                 return
+
+            photo_title, total_chapters = chapter_meta
+
+            yield event.plain_result(
+                f"📖 找到章节: {photo_title}\n"
+                f"📚 章节: {chapter_idx}/{total_chapters}\n"
+                f"📮 开始下载并发送到邮箱 {recipient_email}..."
+            )
 
             if not result.success:
                 yield event.plain_result(

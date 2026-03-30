@@ -58,6 +58,7 @@ def build_plugin(pack_format: str = "zip") -> JMCosmosPlugin:
     plugin._check_permission = MagicMock(return_value=(True, ""))
     plugin._check_download_quota = MagicMock(return_value=(True, "", 3))
     plugin._cleanup_download_files = MagicMock()
+    plugin._send_cover_preview_if_needed = AsyncMock(return_value=None)
     return plugin
 
 
@@ -127,6 +128,60 @@ async def test_jmemail_does_not_consume_quota_when_send_fails():
     assert plugin.quota_manager.consume_quota.call_count == 0
     assert plugin._cleanup_download_files.call_count == 0
     assert any("邮件发送失败" in item for item in results)
+
+
+@pytest.mark.asyncio
+async def test_jmemail_reuses_cover_preview_flow():
+    """jmemail 应与 jm 一样先发送封面/详情预览"""
+    plugin = build_plugin()
+    event = FakeEvent()
+    plugin._prepare_album_download = AsyncMock(
+        return_value=(build_download_result(), build_pack_result())
+    )
+    plugin._send_file_to_email = AsyncMock(return_value=(True, "发送成功"))
+    plugin._send_cover_preview_if_needed = AsyncMock(return_value="预览消息")
+
+    results = [
+        item
+        async for item in plugin.download_album_email_command(
+            event,
+            "123456",
+            "user@example.com",
+        )
+    ]
+
+    plugin._send_cover_preview_if_needed.assert_awaited_once_with(event, "123456")
+    assert results[1] == "预览消息"
+
+
+@pytest.mark.asyncio
+async def test_jmcemail_matches_jmc_progress_messages():
+    """jmcemail 应与 jmc 一样先提示章节解析结果"""
+    plugin = build_plugin()
+    plugin._prepare_photo_download = AsyncMock(
+        return_value=(
+            build_download_result(),
+            build_pack_result(),
+            ("第3话", 12),
+        )
+    )
+    plugin._send_file_to_email = AsyncMock(return_value=(True, "发送成功"))
+
+    results = [
+        item
+        async for item in plugin.download_photo_email_command(
+            FakeEvent(),
+            "123456",
+            "3",
+            "user@example.com",
+        )
+    ]
+
+    assert results[0] == "⏳ 正在获取本子 123456 的第 3 章节信息..."
+    assert results[1] == (
+        "📖 找到章节: 第3话\n📚 章节: 3/12\n📮 开始下载并发送到邮箱 user@example.com..."
+    )
+    assert results[-1] == "发送成功"
 
 
 @pytest.mark.asyncio
