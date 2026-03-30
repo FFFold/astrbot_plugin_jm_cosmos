@@ -101,6 +101,19 @@ def integration_config(temp_download_dir: Path) -> dict[str, Any]:
         "debug_mode": True,
         "jm_username": TEST_USERNAME,
         "jm_password": TEST_PASSWORD,
+        "smtp_enabled": False,
+        "smtp_host": "",
+        "smtp_port": 465,
+        "smtp_use_ssl": True,
+        "smtp_use_tls": False,
+        "smtp_username": "",
+        "smtp_password": "",
+        "smtp_from_email": "",
+        "smtp_from_name": "JM-Cosmos II",
+        "email_subject_template": "[JM-Cosmos II] {title} ({album_id})",
+        "email_body_template": "下载任务已完成。\n\n标题: {title}",
+        "email_max_attachment_mb": 20,
+        "email_send_timeout": 60,
     }
 
 

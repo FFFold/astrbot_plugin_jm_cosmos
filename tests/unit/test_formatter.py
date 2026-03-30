@@ -166,6 +166,14 @@ class TestFormatDownloadResult:
         assert "下载失败" in formatted
         assert "网络连接超时" in formatted
 
+    def test_format_email_result_contains_recipient(self):
+        """测试邮件发送结果格式化包含收件人"""
+        recipient = "user@example.com"
+        formatted = f"✅ 下载完成！\n📮 已发送到邮箱: {recipient}"
+
+        assert "已发送到邮箱" in formatted
+        assert recipient in formatted
+
 
 class TestFormatHelp:
     """格式化帮助信息测试"""
@@ -176,10 +184,12 @@ class TestFormatHelp:
         help_text = """📚 JM-Cosmos II - 漫画下载插件
 【基本命令】
 /jm <ID>     - 下载指定ID的本子
+/jmemail <ID> <邮箱> - 下载本子并发送到邮箱
 /jms <关键词> - 搜索漫画
 /jmi <ID>    - 查看本子详情
 """
         assert "/jm" in help_text
+        assert "/jmemail" in help_text
         assert "/jms" in help_text
         assert "/jmi" in help_text
 

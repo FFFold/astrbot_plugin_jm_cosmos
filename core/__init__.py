@@ -10,6 +10,7 @@ from .auth import JMAuthManager
 from .base import JMClientMixin, JMConfigManager
 from .browser import JMBrowser
 from .downloader import DownloadResult, JMDownloadManager
+from .mailer import EmailSendResult, JMEmailSender
 from .packer import JMPacker
 from .quota import DownloadQuotaManager
 
@@ -25,5 +26,7 @@ __all__ = [
     "JMConfigManager",
     "JMDownloadManager",
     "DownloadResult",
+    "JMEmailSender",
+    "EmailSendResult",
     "JMPacker",
 ]

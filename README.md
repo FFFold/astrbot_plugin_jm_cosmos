@@ -42,6 +42,7 @@ JM-Cosmos II 是一个基于 AstrBot 开发的 JM 漫画下载插件，支持漫
 - **漫画搜索** - 通过关键词搜索 JM 漫画
 - **漫画详情** - 查看漫画信息、标签、作者等
 - **本子下载** - 下载完整本子（/jm）或单章节（/jmc）
+- **邮箱投递** - 支持通过 SMTP 将本子或章节作为加密附件发送到指定邮箱
 - **自动打包** - 下载完成后自动打包为 ZIP 或 PDF
 - **加密保护** - 支持为 ZIP/PDF 设置密码加密
 - **自动发送** - 打包后自动发送文件到聊天
@@ -109,6 +110,31 @@ pip install -r requirements.txt
 ```
 /jmc 123456 3   # 下载本子 123456 的第 3 章
 ```
+
+---
+
+#### `/jmemail <ID> <邮箱>`
+下载指定 ID 的完整本子，并通过 SMTP 发送到指定邮箱。
+
+```
+/jmemail 123456 user@example.com
+```
+
+- 保留原有 ZIP/PDF 打包与加密逻辑
+- 收件邮箱由命令参数指定
+- 当前要求 `pack_format` 为 `zip` 或 `pdf`
+
+---
+
+#### `/jmcemail <本子ID> <章节序号> <邮箱>`
+下载指定本子的指定章节，并通过 SMTP 发送到指定邮箱。
+
+```
+/jmcemail 123456 3 user@example.com
+```
+
+- 适合只投递单章内容
+- 同样复用现有打包、加密和文件命名机制
 
 ---
 
@@ -262,9 +288,50 @@ pip install -r requirements.txt
 | `admin_list`             | 管理员 ID 列表             | 空             | 逗号分隔，不受下载限制 |
 | `jm_username`            | JM账号用户名               | 空             | 面板配置可自动登录 |
 | `jm_password`            | JM账号密码                 | 空             | 命令登录重启后失效 |
+| `smtp_enabled`           | 启用SMTP邮箱发送           | `false`        | 开启后可使用 `/jmemail` 和 `/jmcemail` |
+| `smtp_host`              | SMTP服务器地址             | 空             | 例如 `smtp.qq.com` |
+| `smtp_port`              | SMTP端口                   | `465`          | SSL 常用 465，STARTTLS 常用 587 |
+| `smtp_use_ssl`           | SMTP使用SSL                | `true`         | 建议与 STARTTLS 二选一 |
+| `smtp_use_tls`           | SMTP使用STARTTLS           | `false`        | 建议与 SSL 二选一 |
+| `smtp_username`          | SMTP登录用户名             | 空             | 通常为发件邮箱 |
+| `smtp_password`          | SMTP密码/授权码            | 空             | 请勿直接写入普通邮箱登录密码 |
+| `smtp_from_email`        | 发件邮箱地址               | 空             | 邮件显示的发件地址 |
+| `smtp_from_name`         | 发件人名称                 | `JM-Cosmos II` | 邮件显示名称 |
+| `email_subject_template` | 邮件主题模板               | 内置默认值      | 支持 `{title}`、`{album_id}` 等变量 |
+| `email_body_template`    | 邮件正文模板               | 内置默认值      | 支持标题、作者、加密状态等变量 |
+| `email_max_attachment_mb`| 邮件附件大小限制           | `20`           | 超限将拒绝发送 |
+| `email_send_timeout`     | 邮件发送超时(秒)           | `60`           | SMTP 连接、登录与发送超时 |
 | `search_page_size`       | 搜索结果数量               | `5`            |  |
 | `daily_download_limit`   | 每日下载限制               | `0`            | 0=不限，管理员豁免 |
 | `debug_mode`             | 调试模式                   | `false`        |  |
+
+## 邮箱发送配置示例
+
+如果你希望使用 `/jmemail` 或 `/jmcemail`，请至少完成以下配置：
+
+| 配置项 | 示例值 |
+| ------ | ------ |
+| `smtp_enabled` | `true` |
+| `smtp_host` | `smtp.qq.com` |
+| `smtp_port` | `465` |
+| `smtp_use_ssl` | `true` |
+| `smtp_username` | `your_account@qq.com` |
+| `smtp_password` | `邮箱授权码` |
+| `smtp_from_email` | `your_account@qq.com` |
+
+> [!IMPORTANT]
+> 邮件功能使用的是 SMTP 授权码/应用专用密码，不建议直接使用邮箱网页登录密码。
+
+> [!NOTE]
+> `/jmemail` 与 `/jmcemail` 的收件人邮箱由命令参数传入，不会在插件中持久化保存。
+
+## 邮箱发送说明
+
+- 邮件命令会复用当前 `pack_format`、`pack_password` 和 `filename_show_password` 配置
+- 当 `pack_format = none` 时，邮件命令将拒绝执行，因为邮箱无法直接发送文件夹
+- 附件会在 SMTP 发送前按实际文件大小进行校验，超过 `email_max_attachment_mb` 时直接报错
+- 只有邮件发送成功后，`auto_delete_after_send` 才会清理本地文件
+- 如果发送失败，本地打包文件会保留，方便手动排查或二次发送
 
 ## 文件结构
 
@@ -280,6 +347,7 @@ astrbot_plugin_jm_cosmos/
 │   ├── browser.py       # 浏览查询器（搜索、排行、详情）
 │   ├── constants.py     # 常量定义
 │   ├── downloader.py    # 下载管理器
+│   ├── mailer.py        # SMTP 邮件发送模块
 │   ├── packer.py        # 打包模块 (ZIP/PDF)
 │   ├── quota.py         # 下载配额管理器
 │   └── base/            # 基础模块
@@ -318,6 +386,28 @@ proxy_url: http://127.0.0.1:7890
 ### Q: 如何只允许特定群使用？
 
 **A:** 在「启用的群列表」中填写群号（逗号分隔），如：`123456789,987654321`
+
+### Q: `/jmemail` 或 `/jmcemail` 提示 SMTP 配置不完整？
+
+**A:** 请检查至少以下配置项是否已填写：
+
+- `smtp_enabled = true`
+- `smtp_host`
+- `smtp_port`
+- `smtp_username`
+- `smtp_password`
+- `smtp_from_email`
+
+另外请确认 `smtp_use_ssl` 与 `smtp_use_tls` 不要同时开启。
+
+### Q: 邮件发送失败，提示附件过大？
+
+**A:** 这是 SMTP 常见限制，并不是插件 bug。可尝试：
+
+1. 改为发送单章：`/jmcemail`
+2. 降低图片体积或减少章节内容
+3. 提高 `email_max_attachment_mb`，但仍受邮箱服务商上限限制
+4. 改用原有 `/jm`、`/jmc` 平台内发送方式
 
 ### Q: Docker 部署时文件发送失败？
 
