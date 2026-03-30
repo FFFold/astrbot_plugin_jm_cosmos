@@ -122,12 +122,8 @@ pip install -r requirements.txt
 /jmemail 123456 a@example.com，b@example.com
 ```
 
-- 保留原有 ZIP/PDF 打包与加密逻辑
-- 收件邮箱由命令参数指定，支持英文逗号 `,` 或中文逗号 `，` 分隔多个邮箱
-- 空项会自动忽略，重复邮箱会自动去重
-- 为兼容不同聊天平台的参数解析，示例中建议不要在逗号两侧添加空格
-- 多个邮箱会作为同一封邮件的多个收件人写入 `To`
-- 当前要求 `pack_format` 为 `zip` 或 `pdf`
+- 邮件功能当前要求 `pack_format` 为 `zip` 或 `pdf`，不支持 `none`
+- 邮件收件人之间互相可见，请谨慎群发
 
 ---
 
@@ -138,11 +134,6 @@ pip install -r requirements.txt
 /jmcemail 123456 3 user@example.com
 /jmcemail 123456 3 a@example.com,b@example.com
 ```
-
-- 适合只投递单章内容
-- 同样复用现有打包、加密和文件命名机制
-- 若任一邮箱格式无效，会直接提示具体错误邮箱并终止发送
-- 多个邮箱会作为同一封邮件的多个收件人写入 `To`
 
 ---
 
