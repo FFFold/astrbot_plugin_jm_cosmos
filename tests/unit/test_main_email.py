@@ -62,6 +62,42 @@ def build_plugin(pack_format: str = "zip") -> JMCosmosPlugin:
     return plugin
 
 
+def test_parse_recipient_emails_supports_multiple_delimiters_and_dedup():
+    """应支持中英文逗号、空格并自动去重"""
+    plugin = build_plugin()
+
+    recipients, error = plugin._parse_recipient_emails(
+        "a@example.com， b@example.com, a@example.com ,, c@example.com"
+    )
+
+    assert error == ""
+    assert recipients == [
+        "a@example.com",
+        "b@example.com",
+        "c@example.com",
+    ]
+
+
+def test_parse_recipient_emails_rejects_invalid_email():
+    """存在非法邮箱时应返回具体错误"""
+    plugin = build_plugin()
+
+    recipients, error = plugin._parse_recipient_emails("a@example.com, bad-email")
+
+    assert recipients == []
+    assert error == "❌ 邮箱格式无效: bad-email"
+
+
+def test_parse_recipient_emails_rejects_empty_input():
+    """空邮箱参数应返回明确提示"""
+    plugin = build_plugin()
+
+    recipients, error = plugin._parse_recipient_emails("， ,  ")
+
+    assert recipients == []
+    assert error == "❌ 请提供至少一个有效邮箱地址"
+
+
 def build_download_result():
     """构造下载结果"""
     return SimpleNamespace(
@@ -124,8 +160,57 @@ async def test_jmemail_rejects_invalid_email_before_download():
         )
     ]
 
-    assert results == ["❌ 邮箱格式无效，请输入正确的邮箱地址"]
+    assert results == ["❌ 邮箱格式无效: not-an-email"]
     assert plugin._prepare_album_download.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_jmemail_accepts_multiple_emails_with_cn_comma_and_spaces():
+    """应支持多个邮箱、中文逗号和空格"""
+    plugin = build_plugin()
+    result = build_download_result()
+    pack_result = build_pack_result()
+    plugin._prepare_album_download = AsyncMock(return_value=(result, pack_result))
+    plugin._send_file_to_email = AsyncMock(return_value=(True, "发送成功"))
+
+    results = [
+        item
+        async for item in plugin.download_album_email_command(
+            FakeEvent(),
+            "123456",
+            "a@example.com， b@example.com",
+        )
+    ]
+
+    plugin._send_file_to_email.assert_awaited_once_with(
+        result,
+        pack_result,
+        ["a@example.com", "b@example.com"],
+    )
+    assert "a@example.com, b@example.com" in results[0]
+
+
+@pytest.mark.asyncio
+async def test_jmemail_ignores_empty_items_and_deduplicates_recipients():
+    """空项应忽略，重复邮箱应去重"""
+    plugin = build_plugin()
+    result = build_download_result()
+    pack_result = build_pack_result()
+    plugin._prepare_album_download = AsyncMock(return_value=(result, pack_result))
+    plugin._send_file_to_email = AsyncMock(return_value=(True, "发送成功"))
+
+    async for _ in plugin.download_album_email_command(
+        FakeEvent(),
+        "123456",
+        "a@example.com,,a@example.com,b@example.com",
+    ):
+        pass
+
+    plugin._send_file_to_email.assert_awaited_once_with(
+        result,
+        pack_result,
+        ["a@example.com", "b@example.com"],
+    )
 
 
 @pytest.mark.asyncio
@@ -225,6 +310,35 @@ async def test_jmcemail_matches_jmc_progress_messages():
         "📖 找到章节: 第3话\n📚 章节: 3/12\n📮 开始下载并发送到邮箱 user@example.com..."
     )
     assert results[-1] == "发送成功"
+
+
+@pytest.mark.asyncio
+async def test_jmcemail_accepts_multiple_emails():
+    """jmcemail 应支持多个收件邮箱"""
+    plugin = build_plugin()
+    result = build_download_result()
+    pack_result = build_pack_result()
+    plugin._prepare_photo_download = AsyncMock(
+        return_value=(result, pack_result, ("第3话", 12))
+    )
+    plugin._send_file_to_email = AsyncMock(return_value=(True, "发送成功"))
+
+    results = [
+        item
+        async for item in plugin.download_photo_email_command(
+            FakeEvent(),
+            "123456",
+            "3",
+            "a@example.com,b@example.com",
+        )
+    ]
+
+    plugin._send_file_to_email.assert_awaited_once_with(
+        result,
+        pack_result,
+        ["a@example.com", "b@example.com"],
+    )
+    assert "a@example.com, b@example.com" in results[1]
 
 
 @pytest.mark.asyncio
@@ -329,9 +443,52 @@ async def test_send_file_to_email_handles_invalid_template_format():
     success, message = await plugin._send_file_to_email(
         build_download_result(),
         build_pack_result(),
-        "user@example.com",
+        ["user@example.com"],
     )
 
     assert success is False
     assert "邮件模板格式无效" in message
     assert plugin.email_sender.send_file.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_send_file_to_email_sends_to_all_recipients():
+    """应通过一次发送请求处理所有收件邮箱"""
+    plugin = build_plugin()
+    plugin.email_sender.send_file = AsyncMock(
+        return_value=SimpleNamespace(success=True, error_message=None)
+    )
+
+    success, message = await plugin._send_file_to_email(
+        build_download_result(),
+        build_pack_result(),
+        ["a@example.com", "b@example.com"],
+    )
+
+    assert success is True
+    assert "a@example.com, b@example.com" in message
+    plugin.email_sender.send_file.assert_awaited_once_with(
+        recipients=["a@example.com", "b@example.com"],
+        file_path=build_pack_result().output_path,
+        subject="[JM] 测试本子",
+        body="标题: 测试本子",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_file_to_email_reports_failure_from_smtp():
+    """底层发送失败时应返回错误信息"""
+    plugin = build_plugin()
+    plugin.email_sender.send_file = AsyncMock(
+        return_value=SimpleNamespace(success=False, error_message="SMTP 连接失败")
+    )
+
+    success, message = await plugin._send_file_to_email(
+        build_download_result(),
+        build_pack_result(),
+        ["a@example.com", "b@example.com"],
+    )
+
+    assert success is False
+    assert message == "SMTP 连接失败"
+    plugin.email_sender.send_file.assert_awaited_once()

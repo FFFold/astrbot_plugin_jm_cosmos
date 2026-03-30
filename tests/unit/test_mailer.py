@@ -141,17 +141,19 @@ class TestJMEmailSenderSend:
 
         with patch("core.mailer.smtplib.SMTP_SSL", return_value=smtp_context):
             result = sender._send_file_sync(
-                "user@example.com",
+                ["user@example.com", "other@example.com"],
                 file_path,
                 "subject",
                 "body",
             )
 
         assert result.success is True
-        assert result.recipient == "user@example.com"
+        assert result.recipient == "user@example.com, other@example.com"
         assert result.message_id is not None
         smtp_instance.login.assert_called_once()
         smtp_instance.send_message.assert_called_once()
+        sent_message = smtp_instance.send_message.call_args.args[0]
+        assert sent_message["To"] == "user@example.com, other@example.com"
 
     def test_send_file_sync_failure(self, config_manager_with_admin, temp_dir):
         from core.mailer import JMEmailSender
@@ -165,7 +167,7 @@ class TestJMEmailSenderSend:
             side_effect=RuntimeError("smtp failed"),
         ):
             result = sender._send_file_sync(
-                "user@example.com",
+                ["user@example.com", "other@example.com"],
                 file_path,
                 "subject",
                 "body",
@@ -193,7 +195,7 @@ class TestJMEmailSenderSend:
 
         with patch("core.mailer.smtplib.SMTP", return_value=smtp_context):
             result = sender._send_file_sync(
-                "user@example.com",
+                ["user@example.com", "other@example.com"],
                 file_path,
                 "subject",
                 "body",
@@ -224,7 +226,7 @@ class TestJMEmailSenderSend:
 
         with patch("core.mailer.smtplib.SMTP_SSL", return_value=smtp_context):
             result = sender._send_file_sync(
-                "user@example.com",
+                ["user@example.com", "other@example.com"],
                 file_path,
                 "subject",
                 "body",
@@ -248,7 +250,7 @@ class TestJMEmailSenderSend:
         sender._run_sync = AsyncMock()
 
         result = await sender.send_file(
-            "user@example.com",
+            ["user@example.com", "other@example.com"],
             file_path,
             "subject",
             "body",
@@ -256,6 +258,7 @@ class TestJMEmailSenderSend:
 
         assert result.success is False
         assert result.error_message == "配置错误"
+        assert result.recipient == "user@example.com, other@example.com"
         sender._run_sync.assert_not_awaited()
         sender.validate_attachment.assert_not_called()
 
@@ -273,7 +276,7 @@ class TestJMEmailSenderSend:
         sender._run_sync = AsyncMock()
 
         result = await sender.send_file(
-            "user@example.com",
+            ["user@example.com", "other@example.com"],
             file_path,
             "subject",
             "body",
@@ -281,6 +284,7 @@ class TestJMEmailSenderSend:
 
         assert result.success is False
         assert result.error_message == "附件错误"
+        assert result.recipient == "user@example.com, other@example.com"
         sender._run_sync.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -294,17 +298,26 @@ class TestJMEmailSenderSend:
         file_path.write_bytes(b"demo")
         sender.validate_config = MagicMock(return_value=(True, ""))
         sender.validate_attachment = MagicMock(return_value=(True, ""))
-        expected = EmailSendResult(True, "user@example.com", message_id="<id>")
+        expected = EmailSendResult(
+            True,
+            "user@example.com, other@example.com",
+            message_id="<id>",
+        )
 
         async def fake_run_sync(func, *args):
             assert func == sender._send_file_sync
-            assert args == ("user@example.com", file_path, "subject", "body")
+            assert args == (
+                ["user@example.com", "other@example.com"],
+                file_path,
+                "subject",
+                "body",
+            )
             return expected
 
         sender._run_sync = AsyncMock(side_effect=fake_run_sync)
 
         result = await sender.send_file(
-            "user@example.com",
+            ["user@example.com", "other@example.com"],
             file_path,
             "subject",
             "body",

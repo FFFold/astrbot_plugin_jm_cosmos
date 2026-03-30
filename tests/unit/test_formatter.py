@@ -230,16 +230,13 @@ class TestFormatHelp:
 
     def test_format_help_contains_commands(self):
         """测试帮助信息包含所有命令"""
-        # 验证帮助文本的核心内容
-        help_text = """📚 JM-Cosmos II - 漫画下载插件
-【基本命令】
-/jm <ID>     - 下载指定ID的本子
-/jmemail <ID> <邮箱> - 下载本子并发送到邮箱
-/jms <关键词> - 搜索漫画
-/jmi <ID>    - 查看本子详情
-"""
+        help_text = RealMessageFormatter.format_help()
+
         assert "/jm" in help_text
         assert "/jmemail" in help_text
+        assert "/jmcemail" in help_text
+        assert "\n/jmemail" in help_text
+        assert "\n/jmcemail" in help_text
         assert "/jms" in help_text
         assert "/jmi" in help_text
 

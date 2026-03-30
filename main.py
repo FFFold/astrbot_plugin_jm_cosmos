@@ -103,6 +103,32 @@ class JMCosmosPlugin(Star):
         """校验邮箱格式"""
         return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email))
 
+    def _parse_recipient_emails(self, raw: str) -> tuple[list[str], str]:
+        """解析并校验收件邮箱列表。
+
+        支持英文逗号、中文逗号以及逗号两侧空格；空项会自动忽略，重复邮箱会去重。
+        """
+        normalized = str(raw).replace("，", ",").strip()
+        if not normalized:
+            return [], "❌ 请提供至少一个有效邮箱地址"
+
+        recipients: list[str] = []
+        seen: set[str] = set()
+        for item in normalized.split(","):
+            email = item.strip()
+            if not email:
+                continue
+            if not self._is_valid_email(email):
+                return [], f"❌ 邮箱格式无效: {email}"
+            if email not in seen:
+                seen.add(email)
+                recipients.append(email)
+
+        if not recipients:
+            return [], "❌ 请提供至少一个有效邮箱地址"
+
+        return recipients, ""
+
     def _check_download_quota(self, user_id: str) -> tuple[bool, str, int]:
         """检查下载配额"""
         limit = self.config_manager.daily_download_limit
@@ -155,13 +181,17 @@ class JMCosmosPlugin(Star):
         return self.email_sender.validate_config()
 
     async def _send_file_to_email(
-        self, result, pack_result, recipient: str
+        self, result, pack_result, recipients: list[str]
     ) -> tuple[bool, str]:
         """通过 SMTP 发送文件到邮箱"""
         if not pack_result.success or not pack_result.output_path:
             return False, pack_result.error_message or "打包失败，无法发送邮件"
 
-        context = self._build_email_context(result, pack_result, recipient)
+        if not recipients:
+            return False, "未提供有效的收件邮箱"
+
+        recipient_text = ", ".join(recipients)
+        context = self._build_email_context(result, pack_result, recipient_text)
 
         try:
             subject = self.config_manager.email_subject_template.format(**context)
@@ -172,7 +202,7 @@ class JMCosmosPlugin(Star):
             return False, f"邮件模板格式无效: {e}"
 
         email_result = await self.email_sender.send_file(
-            recipient=recipient,
+            recipients=recipients,
             file_path=pack_result.output_path,
             subject=subject,
             body=body,
@@ -184,7 +214,7 @@ class JMCosmosPlugin(Star):
         return True, MessageFormatter.format_email_send_result(
             result,
             pack_result,
-            recipient,
+            recipient_text,
         )
 
     async def _send_file_to_platform(
@@ -529,8 +559,9 @@ class JMCosmosPlugin(Star):
             yield event.plain_result(MessageFormatter.format_error("invalid_id"))
             return
 
-        if not self._is_valid_email(recipient_email):
-            yield event.plain_result("❌ 邮箱格式无效，请输入正确的邮箱地址")
+        recipients, email_error = self._parse_recipient_emails(recipient_email)
+        if email_error:
+            yield event.plain_result(email_error)
             return
 
         ok, message = self._validate_email_delivery()
@@ -546,7 +577,7 @@ class JMCosmosPlugin(Star):
 
         try:
             yield event.plain_result(
-                f"📮 开始下载本子 {album_id} 并发送到邮箱 {recipient_email}，请稍候..."
+                f"📮 开始下载本子 {album_id} 并发送到邮箱 {', '.join(recipients)}，请稍候..."
             )
 
             preview_result = await self._send_cover_preview_if_needed(event, album_id)
@@ -565,7 +596,7 @@ class JMCosmosPlugin(Star):
             success, message = await self._send_file_to_email(
                 result,
                 pack_result,
-                recipient_email,
+                recipients,
             )
             if success:
                 if limit > 0:
@@ -630,8 +661,9 @@ class JMCosmosPlugin(Star):
             yield event.plain_result("❌ 章节序号必须是数字")
             return
 
-        if not self._is_valid_email(recipient_email):
-            yield event.plain_result("❌ 邮箱格式无效，请输入正确的邮箱地址")
+        recipients, email_error = self._parse_recipient_emails(recipient_email)
+        if email_error:
+            yield event.plain_result(email_error)
             return
 
         ok, message = self._validate_email_delivery()
@@ -668,7 +700,7 @@ class JMCosmosPlugin(Star):
             yield event.plain_result(
                 f"📖 找到章节: {photo_title}\n"
                 f"📚 章节: {chapter_idx}/{total_chapters}\n"
-                f"📮 开始下载并发送到邮箱 {recipient_email}..."
+                f"📮 开始下载并发送到邮箱 {', '.join(recipients)}..."
             )
 
             if not result.success:
@@ -682,7 +714,7 @@ class JMCosmosPlugin(Star):
             success, message = await self._send_file_to_email(
                 result,
                 pack_result,
-                recipient_email,
+                recipients,
             )
             if success:
                 if limit > 0:

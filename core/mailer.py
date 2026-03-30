@@ -78,40 +78,44 @@ class JMEmailSender(JMClientMixin):
 
     async def send_file(
         self,
-        recipient: str,
+        recipients: list[str],
         file_path: Path,
         subject: str,
         body: str,
     ) -> EmailSendResult:
         """异步发送附件邮件"""
+        recipient_text = ", ".join(recipients)
+
         ok, message = self.validate_config()
         if not ok:
-            return EmailSendResult(False, recipient, message)
+            return EmailSendResult(False, recipient_text, message)
 
         ok, message = self.validate_attachment(file_path)
         if not ok:
-            return EmailSendResult(False, recipient, message)
+            return EmailSendResult(False, recipient_text, message)
 
         try:
             return await self._run_sync(
                 self._send_file_sync,
-                recipient,
+                recipients,
                 file_path,
                 subject,
                 body,
             )
         except Exception as e:
             logger.error(f"发送邮件失败: {e}")
-            return EmailSendResult(False, recipient, str(e))
+            return EmailSendResult(False, recipient_text, str(e))
 
     def _send_file_sync(
         self,
-        recipient: str,
+        recipients: list[str],
         file_path: Path,
         subject: str,
         body: str,
     ) -> EmailSendResult:
         """同步发送附件邮件"""
+        recipient_text = ", ".join(recipients)
+
         try:
             message = EmailMessage()
             message["Subject"] = subject
@@ -120,7 +124,7 @@ class JMEmailSender(JMClientMixin):
                 if self.config.smtp_from_name
                 else self.config.smtp_from_email
             )
-            message["To"] = recipient
+            message["To"] = recipient_text
             message["Message-ID"] = make_msgid()
             message.set_content(body)
 
@@ -163,21 +167,21 @@ class JMEmailSender(JMClientMixin):
             if response:
                 return EmailSendResult(
                     False,
-                    recipient,
+                    recipient_text,
                     f"部分收件人发送失败: {response}",
                     str(message["Message-ID"]),
                 )
 
-            logger.info(f"邮件发送成功: {recipient} <- {file_path.name}")
+            logger.info(f"邮件发送成功: {recipient_text} <- {file_path.name}")
             return EmailSendResult(
-                True, recipient, message_id=str(message["Message-ID"])
+                True, recipient_text, message_id=str(message["Message-ID"])
             )
 
         except Exception as e:
-            logger.error(f"SMTP 发送失败 ({recipient}): {e}")
+            logger.error(f"SMTP 发送失败 ({recipient_text}): {e}")
             return EmailSendResult(
                 False,
-                recipient,
+                recipient_text,
                 str(e),
                 str(message["Message-ID"]) if "message" in locals() else None,
             )
